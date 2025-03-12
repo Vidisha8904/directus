@@ -1,0 +1,18 @@
+
+
+version: '3'
+services:
+  directus:
+    image: directus/directus:latest
+    ports:
+      - 8055:8055
+    volumes:
+      - ./database:/directus/database
+    environment:
+      SECRET: ""  # Replace with a strong random string
+      ADMIN_EMAIL: ""
+      ADMIN_PASSWORD: ""    # Change this for security
+      DB_CLIENT: "sqlite3"
+      DB_FILENAME: "/directus/database/data.db"
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: ""
