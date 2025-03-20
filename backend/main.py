@@ -1,3 +1,5 @@
+# test with user conversation history display 20/03
+
 from fastapi import FastAPI, UploadFile, HTTPException
 from pydantic import BaseModel
 import os
@@ -14,15 +16,14 @@ import json
 import requests
 import traceback
 
-# Load environment variables
-load_dotenv()
-os.getenv("OPENAI_API_KEY")
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 import requests
 from fastapi.middleware.cors import CORSMiddleware
 
+# Load environment variables
+load_dotenv()
+os.getenv("OPENAI_API_KEY")
 
 # FastAPI App Initialization and Middleware
 # Initialize FastAPI app
@@ -83,7 +84,6 @@ class QueryResponse(BaseModel):
 
 # Directus configuration 
 DIRECTUS_URL = "http://directus:8055"  # Directus instance URL
-
 
 # Helper functions extract text, handle url, chunking and source name
 def download_pdf_from_url(url: str) -> BytesIO:
@@ -194,8 +194,7 @@ def get_text_chunks(documents: List[Document]) -> List[Document]:
 def format_docs(docs, sources):
     return "\n\n".join(f"Source: {source}\n{doc_text}" for doc_text, source in zip(docs, sources))
 
-# Saveing the query and response to Directus.
-
+# Saving the query and response to Directus.
 def save_to_directus(query: str, response: str, conversation_id: int = None):
     """Save conversation history to Directus with an incremental conversation_id."""
     # Ensure response is a string
@@ -231,7 +230,6 @@ def save_to_directus(query: str, response: str, conversation_id: int = None):
         raise HTTPException(status_code=500, detail=f"Error saving to Directus: {str(e)}")
         
 # Retrieves the last 5 conversation entries from Directus.
-
 def get_conversation_history():
     """Retrieve conversation history from Directus, sorted by latest conversation_id, limited to 5."""
     try:
@@ -244,6 +242,28 @@ def get_conversation_history():
     except requests.exceptions.RequestException as e:
         print("Warning: Could not connect to Directus. Proceeding without history.")
         return []
+
+def get_user_conversation_history(user_id: str, limit: int = 50, offset: int = 0):
+    try:
+        response = requests.get(
+            f"{DIRECTUS_URL}/items/conversation_history",
+            params={
+                "filter[user_created][_eq]": user_id,
+                "sort": "conversation_id",  # Oldest first
+                "limit": limit,
+                "offset": offset,
+            },
+            headers=HEADERS,
+            timeout=5
+        )
+        response.raise_for_status()
+        data = response.json().get("data", [])
+        print(f"Retrieved user history for {user_id}: {[entry['conversation_id'] for entry in data]}")
+        return data
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching user conversation history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching conversation history: {str(e)}")
+    
 
 def process_query(user_question: str) -> str:
     """Process a user query with conversation history and return LLM response."""
@@ -292,8 +312,8 @@ def process_query(user_question: str) -> str:
         {"role": "user", "content": f"Question: {user_question}\n\nInformation from PDFs:\n{context}"}
     ]
     response = model.invoke(messages).content
-    print(f"LLM response: {response}")
-    print(f"Response type: {type(response)}")
+    # print(f"LLM response: {response}")
+    # print(f"Response type: {type(response)}")
 
     # Save the new query-response pair to Directus
     try:
@@ -358,6 +378,24 @@ async def query(request: QueryRequest, user: dict = Depends(get_current_user)):
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+    
+@app.get("/conversation-history")
+async def fetch_conversation_history(limit: int = 50, offset: int = 0,user: dict = Depends(get_current_user)):
+    """Fetch the conversation history for the authenticated user."""
+    try:
+        global HEADERS
+        HEADERS = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {user.get('access_token', 'default-token')}"
+        }
+        user_id = user.get("id")
+        print("got the userid now passing to---------------------------------------------------------------------------")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in token.")
+        history = get_user_conversation_history(user_id)
+        return {"history": history}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching conversation history: {str(e)}")
     
 if __name__ == "__main__":
     import uvicorn
