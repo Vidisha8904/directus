@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+pydantic
+chromadb
+langchain
+langchain-openai
+langchain-huggingface
+PyPDF2
+camelot-py[cv]
+requests
+python-dotenv
+python-multipart
+einops
+python-jose[cryptography]
+transformers

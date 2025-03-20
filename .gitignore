@@ -2,3 +2,11 @@
 venv
 database
 docker-compose.yml
+__pycache__
+.chroma_env
+context.tar
+huggingface_cache
+node_modules
+package.json
+package-lock.json
+test1.py 

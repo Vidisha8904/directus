@@ -1,0 +1,172 @@
+/* Ensure the body takes up the full viewport height and uses Flexbox for centering */
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f4f4f4;
+  min-height: 100vh; /* Ensure the body is at least the height of the viewport */
+  display: flex; /* Use Flexbox */
+  justify-content: center; /* Center horizontally */
+  align-items: center; /* Center vertically */
+}
+
+/* Update .dashboard to maintain its styling */
+.dashboard {
+  max-width: 600px;
+  width: 100%; /* Ensure it takes up the full available width (up to max-width) */
+  padding: 20px;
+  background: white;
+  border-radius: 5px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  margin: 20px; /* Add some margin to prevent it from touching the edges on smaller screens */
+}
+
+/* Rest of your existing CSS */
+.auth-container {
+  max-width: 400px;
+  margin: 50px auto;
+  padding: 20px;
+  background: white;
+  border-radius: 5px;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.auth-container h2 {
+  text-align: center;
+}
+
+.dashboard h2 {
+  text-align: center;
+  color: rgb(0, 0, 0);
+}
+
+.dashboard p {
+  color: rgb(0, 0, 0);
+}
+
+.auth-container form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-container input {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.auth-container button {
+  padding: 10px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.auth-container button:hover {
+  background: #0056b3;
+}
+
+.auth-container .error {
+  color: red;
+  text-align: center;
+}
+
+.dashboard h2 {
+  text-align: center;
+}
+
+.dashboard button {
+  padding: 10px;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.dashboard button:hover {
+  background: #c82333;
+}
+
+.dashboard form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.dashboard input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.dashboard form button {
+  background: #007bff;
+  padding: 10px 20px;
+}
+
+.dashboard form button:hover {
+  background: #0056b3;
+}
+
+.response {
+  padding: 15px;
+  background-color: #f8f9fa;
+  border-left: 4px solid #007bff;
+  border-radius: 5px;
+  margin-top: 20px;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #333;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.response h4 {
+  margin: 0 0 10px 0;
+  font-size: 18px;
+  color: #007bff;
+  font-weight: 600;
+}
+
+.response p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #333;
+}
+
+.response.error {
+  border-left-color: #dc3545;
+  background-color: #fff5f5;
+}
+
+.response.error h4 {
+  color: #dc3545;
+}
+
+.response.loading {
+  color: #666;
+  font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .dashboard {
+      margin: 20px;
+      padding: 15px;
+  }
+
+  .response {
+      font-size: 14px;
+  }
+
+  .response h4 {
+      font-size: 16px;
+  }
+}
