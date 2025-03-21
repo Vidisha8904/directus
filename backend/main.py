@@ -1,4 +1,4 @@
-# test with user conversation history display 20/03
+# working with user conversation history display 20/03
 
 from fastapi import FastAPI, UploadFile, HTTPException
 from pydantic import BaseModel
@@ -195,8 +195,8 @@ def format_docs(docs, sources):
     return "\n\n".join(f"Source: {source}\n{doc_text}" for doc_text, source in zip(docs, sources))
 
 # Saving the query and response to Directus.
-def save_to_directus(query: str, response: str, conversation_id: int = None):
-    """Save conversation history to Directus with an incremental conversation_id."""
+def save_to_directus(query: str, response: str, user_id: str, conversation_id: int = None):
+    """Save conversation history to Directus with an incremental conversation_id and user_id."""
     # Ensure response is a string
     if not isinstance(response, str):
         print(f"Error: Response is not a string, received: {response}")
@@ -210,14 +210,15 @@ def save_to_directus(query: str, response: str, conversation_id: int = None):
             data = response_get.json().get("data", [])
             last_conversation_id = max((entry["conversation_id"] or 0) for entry in data)  # Handle null values
             conversation_id = last_conversation_id + 1
-        except (requests.exceptions.RequestException, ValueError):
+        except (requests.exceptions.RequestException, ValueError) as e:
             print(f"Error fetching conversation ID: {str(e)}")
             conversation_id = 1  # Start with 1 if no history or error
 
     payload = {
         "query": query,
         "response": response,
-        "conversation_id": conversation_id
+        "conversation_id": conversation_id,
+        "user_created": user_id  # Associate the conversation with the user
     }
     print(f"Sending payload: {payload}")  # Debug payload
     try:
@@ -228,19 +229,28 @@ def save_to_directus(query: str, response: str, conversation_id: int = None):
         print(f"Directus error: {str(e)}")  # Debug error
         print(f"Response text: {getattr(e.response, 'text', 'No response text')}")
         raise HTTPException(status_code=500, detail=f"Error saving to Directus: {str(e)}")
-        
+    
 # Retrieves the last 5 conversation entries from Directus.
-def get_conversation_history():
-    """Retrieve conversation history from Directus, sorted by latest conversation_id, limited to 5."""
+def get_conversation_history(user_id: str):
+    """Retrieve the last 5 conversations for a specific user from Directus, sorted by latest conversation_id."""
     try:
-        response = requests.get(f"{DIRECTUS_URL}/items/conversation_history?sort=-conversation_id&limit=5", headers=HEADERS, timeout=5)
+        response = requests.get(
+            f"{DIRECTUS_URL}/items/conversation_history",
+            params={
+                "filter[user_created][_eq]": user_id,  # Filter by user
+                "sort": "-conversation_id",  # Newest first
+                "limit": 5,  # Last 5 conversations
+            },
+            headers=HEADERS,
+            timeout=5
+        )
         response.raise_for_status()
         data = response.json().get("data", [])
-        print(f"Raw API response: {response.text}")  # Log the full response
-        print(f"Retrieved history (order): {[entry['conversation_id'] for entry in data]}")  # Log conversation_ids in order
+        print(f"Raw API response for user {user_id}: {response.text}")  # Log the full response
+        print(f"Retrieved history for user {user_id} (order): {[entry['conversation_id'] for entry in data]}")  # Log conversation_ids in order
         return data
     except requests.exceptions.RequestException as e:
-        print("Warning: Could not connect to Directus. Proceeding without history.")
+        print(f"Warning: Could not connect to Directus for user {user_id}. Proceeding without history: {str(e)}")
         return []
 
 def get_user_conversation_history(user_id: str, limit: int = 50, offset: int = 0):
@@ -265,7 +275,7 @@ def get_user_conversation_history(user_id: str, limit: int = 50, offset: int = 0
         raise HTTPException(status_code=500, detail=f"Error fetching conversation history: {str(e)}")
     
 
-def process_query(user_question: str) -> str:
+def process_query(user_question: str, user_id: str) -> str:
     """Process a user query with conversation history and return LLM response."""
     # Retrieve relevant documents
     docs = retrieve_from_collection(user_question, top_k=8)
@@ -279,8 +289,8 @@ def process_query(user_question: str) -> str:
         doc_texts = [doc['document'] for doc in docs]
         context = format_docs(doc_texts, sources)
 
-    # Retrieve conversation history
-    history = get_conversation_history()
+    # Retrieve conversation history for the specific user
+    history = get_conversation_history(user_id)
     history_str = "Previous Conversation History:\n" + "\n".join(
         f"User: {entry['query']}\nAssistant: {entry['response']}" for entry in history
     ) if history else "No previous history."
@@ -312,12 +322,10 @@ def process_query(user_question: str) -> str:
         {"role": "user", "content": f"Question: {user_question}\n\nInformation from PDFs:\n{context}"}
     ]
     response = model.invoke(messages).content
-    # print(f"LLM response: {response}")
-    # print(f"Response type: {type(response)}")
 
     # Save the new query-response pair to Directus
     try:
-        save_to_directus(user_question, response)
+        save_to_directus(user_question, response, user_id)
     except Exception as e:
         print(f"Failed to save to Directus: {str(e)}")
     return response
@@ -374,7 +382,10 @@ async def query(request: QueryRequest, user: dict = Depends(get_current_user)):
             "Authorization": f"Bearer {user.get('access_token', 'default-token')}"  # Use token from Directus auth
         }
         print(f"Setting HEADERS in /query: {HEADERS}")
-        response = process_query(request.question)
+        user_id = user.get("id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in token.")
+        response = process_query(request.question, user_id)
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
