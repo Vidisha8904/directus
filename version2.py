@@ -15,15 +15,11 @@ import camelot
 import json
 import requests
 import traceback
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 import requests
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -33,7 +29,6 @@ os.getenv("OPENAI_API_KEY")
 # Initialize FastAPI app
 app = FastAPI(title="PDF RAG Backend")
 
-# cors configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],  # Match React dev server
@@ -53,6 +48,7 @@ async def options_query():
 # Authentication with Directus
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         response = requests.get(
@@ -69,7 +65,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         user_data["access_token"] = token
         return user_data
     except Exception as e:
-        logger.error(f"Error with token: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -92,28 +87,25 @@ DIRECTUS_URL = "http://directus:8055"  # Directus instance URL
 
 # Helper functions extract text, handle url, chunking and source name
 def download_pdf_from_url(url: str) -> BytesIO:
-    """Download a PDF from a URL."""
+    """Download a PDF from a URL and return it as a BytesIO object."""
     try:
-        response = requests.get(url, stream=True)
+        response = requests.get(url, stream=True, timeout=10)
         response.raise_for_status()
-        pdf = BytesIO(response.content)
-        pdf.name = url.split("/")[-1]
-        return pdf
+        if 'application/pdf' not in response.headers.get('Content-Type', ''):
+            raise HTTPException(status_code=400, detail=f"URL {url} does not point to a PDF.")
+        pdf_bytes = BytesIO(response.content)
+        pdf_bytes.name = url.split('/')[-1] or "downloaded_pdf.pdf"
+        return pdf_bytes
     except Exception as e:
-        logger.error(f"Error downloading PDF from {url}: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=400, detail=f"Error downloading PDF from {url}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error downloading PDF from {url}: {str(e)}")
 
 def get_pdf_text(pdf_files: List[BytesIO]) -> List[Document]:
     """Extract text and tables from PDFs."""
     documents = []
     for pdf in pdf_files:
         temp_path = f"temp_{pdf.name}"
-        try:
-            with open(temp_path, "wb") as f:
-                f.write(pdf.read())
-        except Exception as e:
-            logger.error(f"Error writing temporary file {temp_path}: {str(e)}\n{traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Error writing temporary file: {str(e)}")
+        with open(temp_path, "wb") as f:
+            f.write(pdf.read())
 
         # Extract text with PyPDF2
         text_data = {"text": []}
@@ -124,7 +116,6 @@ def get_pdf_text(pdf_files: List[BytesIO]) -> List[Document]:
                 if page_text:
                     text_data["text"].append({"page": page_num + 1, "content": page_text})
         except Exception as e:
-            logger.error(f"Error extracting text from {pdf.name}: {str(e)}\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Error extracting text from {pdf.name}: {str(e)}")
 
         # Extract tables with camelot
@@ -138,17 +129,17 @@ def get_pdf_text(pdf_files: List[BytesIO]) -> List[Document]:
                         "page": table.parsing_report['page'],
                         "data": table.df.replace({None: ""}).to_dict(orient='records')
                     })
-            # if not table_data["tables"]:
-            #     tables = camelot.read_pdf(temp_path, pages='all', flavor='stream')
-            #     for i, table in enumerate(tables):
-            #         if table.df.size > 0:
-            #             table_data["tables"].append({
-            #                 "table_id": f"Table {i + 1}",
-            #                 "page": table.parsing_report['page'],
-            #                 "data": table.df.replace({None: ""}).to_dict(orient='records')
-            #             })
+            if not table_data["tables"]:
+                tables = camelot.read_pdf(temp_path, pages='all', flavor='stream')
+                for i, table in enumerate(tables):
+                    if table.df.size > 0:
+                        table_data["tables"].append({
+                            "table_id": f"Table {i + 1}",
+                            "page": table.parsing_report['page'],
+                            "data": table.df.replace({None: ""}).to_dict(orient='records')
+                        })
         except Exception as e:
-            logger.warning(f"Failed to extract tables from {pdf.name}, proceeding without tables: {str(e)}\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Error extracting tables from {pdf.name}: {str(e)}")
 
         combined_data = {
             "source": pdf.name,
@@ -159,16 +150,12 @@ def get_pdf_text(pdf_files: List[BytesIO]) -> List[Document]:
 
         doc = Document(page_content=json_content, metadata={"filename": pdf.name})
         documents.append(doc)
-
-        try:
-            os.remove(temp_path)
-        except Exception as e:
-            logger.warning(f"Failed to delete temporary file {temp_path}: {str(e)}\n{traceback.format_exc()}")
+        os.remove(temp_path)
 
     return documents
 
-def get_text_chunks(documents: List[Document], user_id: str) -> List[Document]:
-    """Chunk documents and add to ChromaDB with user_id."""
+def get_text_chunks(documents: List[Document]) -> List[Document]:
+    """Chunk documents and add to ChromaDB."""
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=250, separators=["\n\n", "\n", ","])
     all_chunks = []
 
@@ -187,7 +174,7 @@ def get_text_chunks(documents: List[Document], user_id: str) -> List[Document]:
                         metadatas=[{"source": doc.metadata["filename"], "type": "text"}]
                     )
                     chunk_texts = [chunk.page_content for chunk in text_chunks]
-                    add_to_collection(chunk_texts, doc.metadata['filename'], user_id)
+                    add_to_collection(chunk_texts, doc.metadata['filename'])
                     all_chunks.extend(text_chunks)
 
             # Process tables
@@ -197,10 +184,9 @@ def get_text_chunks(documents: List[Document], user_id: str) -> List[Document]:
                     page_content=table_json,
                     metadata={"source": doc.metadata["filename"], "type": "table"}
                 )
-                add_to_collection([table_json], doc.metadata['filename'], user_id)
+                add_to_collection([table_json], doc.metadata['filename'])
                 all_chunks.append(table_chunk)
         except Exception as e:
-            logger.error(f"Error processing {doc.metadata['filename']}: {str(e)}\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Error processing {doc.metadata['filename']}: {str(e)}")
 
     return all_chunks
@@ -292,7 +278,7 @@ def get_user_conversation_history(user_id: str, limit: int = 50, offset: int = 0
 def process_query(user_question: str, user_id: str) -> str:
     """Process a user query with conversation history and return LLM response."""
     # Retrieve relevant documents
-    docs = retrieve_from_collection(user_question,user_id, top_k=8)
+    docs = retrieve_from_collection(user_question, top_k=8)
     
     # Prepare context and sources
     if not docs:
@@ -346,39 +332,28 @@ def process_query(user_question: str, user_id: str) -> str:
 
 # API Endpoints
 @app.post("/upload-pdf")
-async def upload_pdf(files: List[UploadFile], user: dict = Depends(get_current_user)):
-    """Upload PDF files, process them, and save metadata to Directus."""
+async def upload_pdf(files: List[UploadFile]):
+    """Upload PDF files and process them."""
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
     
-    user_id = user.get("id")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token.")
-
     pdf_bytes = [BytesIO(await file.read()) for file in files]
     for i, pdf in enumerate(pdf_bytes):
         pdf.name = files[i].filename
     
     try:
         documents = get_pdf_text(pdf_bytes)
-        get_text_chunks(documents, user_id)
-        # for doc in documents:
-        #     save_pdf_metadata_to_directus(doc.metadata['filename'], user_id)
+        get_text_chunks(documents)
         return {"message": f"Processed {len(documents)} PDFs successfully."}
     except Exception as e:
-        logger.error(f"Error in /upload-pdf endpoint: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error processing PDFs: {str(e)}")
-    
+
 @app.post("/process-url")
-async def process_url(request: URLRequest, user: dict = Depends(get_current_user)):
+async def process_url(request: URLRequest):
     """Process PDFs from URLs."""
     if not request.urls:
         raise HTTPException(status_code=400, detail="No URLs provided.")
     
-    user_id = user.get("id")
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID not found in token.")
-
     pdf_bytes = []
     for url in request.urls:
         pdf = download_pdf_from_url(url)
@@ -390,7 +365,7 @@ async def process_url(request: URLRequest, user: dict = Depends(get_current_user
     
     try:
         documents = get_pdf_text(pdf_bytes)
-        get_text_chunks(documents, user_id)  # Pass user_id
+        get_text_chunks(documents)
         return {"message": f"Processed {len(documents)} PDFs from URLs successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing URLs: {str(e)}")
